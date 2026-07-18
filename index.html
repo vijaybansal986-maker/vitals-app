@@ -1246,6 +1246,7 @@ let voiceState = 'idle'; // idle | listening | thinking | speaking
 let voiceMicEnabled = true; // user-controlled mic on/off, independent of OS permission
 let hotMicRunning = false; // true while recognition is running in the background during 'speaking' to detect barge-in
 let hotMicRetries = 0; // guards against silent death from a single failed start attempt
+let subtitleFallbackTimer = null; // drives subtitle scroll/highlight when the browser doesn't emit onboundary events
 
 if (SpeechRecognition) {
   voiceRecognition = new SpeechRecognition();
@@ -1258,6 +1259,7 @@ if (SpeechRecognition) {
     // Barge-in: Vitals is talking and the user just started speaking — stop it and listen
     if (voiceState === 'speaking') {
       if (window.speechSynthesis) window.speechSynthesis.cancel();
+      clearInterval(subtitleFallbackTimer);
       voiceRecognition.continuous = false; // now behave like a normal one-shot capture of what the user is saying
       setVoiceState('listening');
     }
@@ -1388,13 +1390,31 @@ async function handleVoiceUtterance(text) {
     const lang = langSelect.value;
     utter.lang = lang === 'Hindi' ? 'hi-IN' : lang === 'Spanish' ? 'es-ES' : lang === 'French' ? 'fr-FR' : 'en-US';
     let subtitleWords = [];
+    let boundaryFired = false;
+    let speechStartTime = 0;
     utter.onstart = () => {
       voiceSubtitles.style.display = 'block';
       voiceSubtitles.scrollTop = 0;
       subtitleWords = buildSubtitleSpans(cleanReply);
+      boundaryFired = false;
+      speechStartTime = Date.now();
+      const estWordsPerSec = 2.5 * (utter.rate || 1); // rough average speaking pace, used only if onboundary never fires
+      const estDurationMs = Math.max(500, (subtitleWords.length / estWordsPerSec) * 1000);
+      clearInterval(subtitleFallbackTimer);
+      subtitleFallbackTimer = setInterval(() => {
+        if (!boundaryFired) {
+          // This browser/voice doesn't emit word-boundary events — estimate progress by elapsed time instead
+          const progress = Math.min(1, (Date.now() - speechStartTime) / estDurationMs);
+          const targetIndex = Math.floor(progress * subtitleWords.length);
+          subtitleWords.forEach((w, i) => { if (i <= targetIndex) w.el.classList.add('spoken'); });
+        }
+        // Always keep the box following the content, regardless of whether word-level highlighting works on this browser
+        voiceSubtitles.scrollTop = voiceSubtitles.scrollHeight;
+      }, 200);
       startHotMic(); // hot mic goes live the moment Vitals starts talking, so the user can interrupt anytime
     };
     utter.onboundary = (event) => {
+      boundaryFired = true;
       if (typeof event.charIndex !== 'number') return;
       let lastSpoken = null;
       subtitleWords.forEach(w => { if (w.start <= event.charIndex) { w.el.classList.add('spoken'); lastSpoken = w.el; } });
@@ -1404,7 +1424,9 @@ async function handleVoiceUtterance(text) {
       }
     };
     utter.onend = () => {
+      clearInterval(subtitleFallbackTimer);
       subtitleWords.forEach(w => w.el.classList.add('spoken'));
+      voiceSubtitles.scrollTop = voiceSubtitles.scrollHeight;
       if (voiceState === 'speaking' && hotMicRunning) { try { voiceRecognition.stop(); } catch (e) {} }
       if (!voiceModeActive) return;
       if (voiceState !== 'speaking') return; // it was interrupted; barge-in flow already switched state

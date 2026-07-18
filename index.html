@@ -1390,12 +1390,18 @@ async function handleVoiceUtterance(text) {
     let subtitleWords = [];
     utter.onstart = () => {
       voiceSubtitles.style.display = 'block';
+      voiceSubtitles.scrollTop = 0;
       subtitleWords = buildSubtitleSpans(cleanReply);
       startHotMic(); // hot mic goes live the moment Vitals starts talking, so the user can interrupt anytime
     };
     utter.onboundary = (event) => {
       if (typeof event.charIndex !== 'number') return;
-      subtitleWords.forEach(w => { if (w.start <= event.charIndex) w.el.classList.add('spoken'); });
+      let lastSpoken = null;
+      subtitleWords.forEach(w => { if (w.start <= event.charIndex) { w.el.classList.add('spoken'); lastSpoken = w.el; } });
+      if (lastSpoken) {
+        // Keep the currently-spoken word roughly centered in the box instead of letting it run off the bottom
+        voiceSubtitles.scrollTop = lastSpoken.offsetTop - voiceSubtitles.clientHeight / 2 + lastSpoken.offsetHeight;
+      }
     };
     utter.onend = () => {
       subtitleWords.forEach(w => w.el.classList.add('spoken'));

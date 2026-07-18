@@ -966,8 +966,16 @@ function addMessage(role, text, imageDataUrl) {
     const downBtn = document.createElement('button');
     downBtn.className = 'tool-btn'; downBtn.title = 'Not helpful';
     downBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 15v4a3 3 0 003 3l4-9V2H5.72a2 2 0 00-2 1.7l-1.38 9a2 2 0 002 2.3H10z"/></svg>';
-    upBtn.addEventListener('click', () => { upBtn.classList.add('rated-up'); downBtn.classList.remove('rated-down'); });
-    downBtn.addEventListener('click', () => { downBtn.classList.add('rated-down'); upBtn.classList.remove('rated-up'); });
+    upBtn.addEventListener('click', () => {
+      const alreadyUp = upBtn.classList.contains('rated-up');
+      upBtn.classList.remove('rated-up'); downBtn.classList.remove('rated-down');
+      if (!alreadyUp) upBtn.classList.add('rated-up');
+    });
+    downBtn.addEventListener('click', () => {
+      const alreadyDown = downBtn.classList.contains('rated-down');
+      downBtn.classList.remove('rated-down'); upBtn.classList.remove('rated-up');
+      if (!alreadyDown) downBtn.classList.add('rated-down');
+    });
     const pinBtn = document.createElement('button');
     pinBtn.className = 'tool-btn'; pinBtn.title = 'Pin this answer';
     pinBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l1.5 5.5L19 9l-4 4 1 6-4-3-4 3 1-6-4-4 5.5-1.5z"/></svg>';

@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -158,9 +159,25 @@
     #sidebar.closed { margin-left: -240px; }
   }
   @keyframes voicepulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.08); } }
-  #voiceCircle.listening { animation: voicepulse 1.2s infinite ease-in-out; background: var(--danger); }
-  #voiceCircle.thinking { background: var(--sage-500); }
-  #voiceCircle.speaking { animation: voicepulse 0.7s infinite ease-in-out; background: var(--sage-300); }
+  @keyframes orbBreathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.035); } }
+  @keyframes orbBlob {
+    0%, 100% { border-radius: 42% 58% 65% 35% / 45% 45% 55% 55%; }
+    25% { border-radius: 62% 38% 40% 60% / 55% 62% 38% 45%; }
+    50% { border-radius: 50% 50% 34% 66% / 38% 56% 44% 62%; }
+    75% { border-radius: 34% 66% 56% 44% / 62% 40% 60% 38%; }
+  }
+  #voiceCircle {
+    background: radial-gradient(circle at 32% 28%, var(--sage-300), var(--sage-700) 72%);
+    animation: orbBreathe 3.2s ease-in-out infinite;
+  }
+  #voiceCircle.listening { animation: voicepulse 1.1s infinite ease-in-out; background: radial-gradient(circle at 32% 28%, #f2a49c, var(--danger) 72%); }
+  #voiceCircle.thinking { animation: orbBreathe 1s ease-in-out infinite; background: radial-gradient(circle at 32% 28%, var(--sage-300), var(--sage-500) 72%); }
+  #voiceCircle.speaking { animation: orbBlob 2.1s ease-in-out infinite, orbBreathe 2.1s ease-in-out infinite; background: radial-gradient(circle at 32% 28%, var(--sage-100), var(--sage-500) 75%); }
+  #voiceCircle.muted { animation: none; background: var(--ink-soft); opacity: 0.5; cursor: not-allowed; }
+  .sub-word { opacity: 0.35; transition: opacity 0.25s ease; }
+  .sub-word.spoken { opacity: 1; }
+  #voiceMicToggle { display:flex; align-items:center; gap:6px; background:transparent; border:1px solid var(--line); border-radius:999px; padding:6px 14px; font-size:12px; color:var(--ink-soft); cursor:pointer; margin-top:16px; }
+  #voiceMicToggle.off { border-color: var(--danger); color: var(--danger); }
   @media print {
     header, .disclaimer, .emergency-bar, .quicklinks, .suggestions, #form, .side-panel, .msg-tools, #sidebar { display: none !important; }
     #app { height: auto; } #thread { overflow: visible; }
@@ -227,6 +244,10 @@
   <div id="voiceStatus" style="margin-top:22px; font-size:14px; color: var(--ink-soft);">Tap to speak</div>
   <div id="voiceTranscript" style="margin-top:10px; font-size:13px; color: var(--ink); text-align:center; max-width:320px; min-height:20px;"></div>
   <div id="voiceSubtitles" style="margin-top:14px; font-size:15px; line-height:1.6; color: var(--ink); text-align:center; max-width:420px; max-height:180px; overflow-y:auto; display:none; padding:14px 18px; background:var(--sage-50); border:1px solid var(--line); border-radius:12px;"></div>
+  <button type="button" id="voiceMicToggle">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2M12 19v4M8 23h8"/></svg>
+    <span id="voiceMicToggleLabel">Mic on</span>
+  </button>
   <label style="margin-top:26px; display:flex; align-items:center; gap:8px; font-size:12px; color:var(--ink-soft);">
     <input type="checkbox" id="voiceContinuous" checked>
     Keep listening after each reply
@@ -676,7 +697,11 @@ authSubmit.addEventListener('click', () => {
         startOnboarding();
       }
     } catch (err) {
-      showAuthError(friendlyAuthError(err.code));
+      console.error('Firebase auth error:', err.code, err.message);
+      const known = friendlyAuthError(err.code);
+      showAuthError(err.code === 'auth/unauthorized-domain'
+        ? 'This page is opened as a local file, which Firebase blocks for security. Open it through a real web address (see chat for how) instead of double-clicking the file.'
+        : known + (known === 'Something went wrong. Please try again.' ? ` (${err.code || err.message})` : ''));
     } finally {
       authSubmit.disabled = false;
       authSubmit.textContent = originalLabel;
@@ -875,6 +900,14 @@ function speak(text) {
   utter.lang = lang === 'Hindi' ? 'hi-IN' : lang === 'Spanish' ? 'es-ES' : lang === 'French' ? 'fr-FR' : 'en-US';
   window.speechSynthesis.speak(utter);
 }
+
+function scrollThreadToBottom() {
+  thread.scrollTop = thread.scrollHeight;
+  requestAnimationFrame(() => { thread.scrollTop = thread.scrollHeight; });
+}
+// Keeps the chat pinned to the latest message as content is added or resized (e.g. images loading, long replies wrapping)
+const threadResizeObserver = new ResizeObserver(() => scrollThreadToBottom());
+threadResizeObserver.observe(thread);
 
 function addMessage(role, text, imageDataUrl) {
   const wrap = document.createElement('div');
@@ -1187,45 +1220,107 @@ const voiceStatus = document.getElementById('voiceStatus');
 const voiceTranscript = document.getElementById('voiceTranscript');
 const voiceContinuous = document.getElementById('voiceContinuous');
 const voiceSubtitles = document.getElementById('voiceSubtitles');
+const voiceMicToggle = document.getElementById('voiceMicToggle');
+const voiceMicToggleLabel = document.getElementById('voiceMicToggleLabel');
 
 let voiceRecognition = null;
 let voiceModeActive = false;
 let voiceState = 'idle'; // idle | listening | thinking | speaking
+let voiceMicEnabled = true; // user-controlled mic on/off, independent of OS permission
+let hotMicRunning = false; // true while recognition is running in the background during 'speaking' to detect barge-in
 
 if (SpeechRecognition) {
   voiceRecognition = new SpeechRecognition();
-  voiceRecognition.continuous = false;
-  voiceRecognition.interimResults = false;
+  voiceRecognition.interimResults = true; // needed to detect barge-in quickly and to catch normal utterances
   voiceRecognition.onresult = (e) => {
-    const text = e.results[0][0].transcript;
+    const result = e.results[e.results.length - 1];
+    const text = result[0].transcript;
     voiceTranscript.textContent = text;
-    handleVoiceUtterance(text);
+
+    // Barge-in: Vitals is talking and the user just started speaking — stop it and listen
+    if (voiceState === 'speaking') {
+      if (window.speechSynthesis) window.speechSynthesis.cancel();
+      setVoiceState('listening');
+    }
+
+    if (result.isFinal) {
+      try { voiceRecognition.stop(); } catch (e2) {}
+      handleVoiceUtterance(text);
+    }
   };
   voiceRecognition.onerror = (e) => {
+    hotMicRunning = false;
+    if (e.error === 'no-speech' || e.error === 'aborted') {
+      // Expected during hot-mic listening while Vitals talks with nothing said yet — not a real error
+      if (voiceState === 'speaking' && voiceMicEnabled && voiceModeActive) { startHotMic(); return; }
+    }
     setVoiceState('idle');
     const msg = micErrorMessage(e.error);
     voiceStatus.textContent = msg || "Didn't catch that — tap to try again";
   };
-  voiceRecognition.onend = () => { if (voiceState === 'listening') setVoiceState('idle'); };
+  voiceRecognition.onend = () => {
+    hotMicRunning = false;
+    if (voiceState === 'speaking' && voiceMicEnabled && voiceModeActive) {
+      // keep the hot mic alive for the whole time Vitals is talking, so barge-in works throughout
+      startHotMic();
+    } else if (voiceState === 'listening') {
+      setVoiceState('idle');
+    }
+  };
 } else {
   voiceModeBtn.style.display = 'none';
 }
 
 function setVoiceState(state) {
   voiceState = state;
-  voiceCircle.classList.remove('listening', 'thinking', 'speaking');
+  voiceCircle.classList.remove('listening', 'thinking', 'speaking', 'muted');
+  if (!voiceMicEnabled && state !== 'speaking' && state !== 'thinking') {
+    voiceCircle.classList.add('muted');
+    voiceStatus.textContent = 'Mic is off';
+    return;
+  }
   if (state === 'listening') { voiceCircle.classList.add('listening'); voiceStatus.textContent = 'Listening…'; }
   else if (state === 'thinking') { voiceCircle.classList.add('thinking'); voiceStatus.textContent = 'Thinking…'; }
   else if (state === 'speaking') { voiceCircle.classList.add('speaking'); voiceStatus.textContent = 'Speaking…'; }
   else { voiceStatus.textContent = 'Tap to speak'; }
 }
 
+function updateMicToggleUI() {
+  voiceMicToggle.classList.toggle('off', !voiceMicEnabled);
+  voiceMicToggleLabel.textContent = voiceMicEnabled ? 'Mic on' : 'Mic off';
+}
+
+voiceMicToggle.addEventListener('click', () => {
+  voiceMicEnabled = !voiceMicEnabled;
+  updateMicToggleUI();
+  if (!voiceMicEnabled) {
+    // Turning mic off immediately stops anything listening — Vitals will not hear the user
+    try { if (voiceRecognition) voiceRecognition.stop(); } catch (e) {}
+    hotMicRunning = false;
+    if (voiceState === 'listening') setVoiceState('idle'); else setVoiceState(voiceState); // refresh muted styling if idle
+  } else {
+    if (voiceState === 'idle') setVoiceState('idle');
+    // If Vitals happens to be mid-speech when mic is re-enabled, restart the hot mic for barge-in
+    if (voiceState === 'speaking' && !hotMicRunning) startHotMic();
+  }
+});
+
+function startHotMic() {
+  if (!voiceRecognition || !voiceMicEnabled || hotMicRunning || !voiceModeActive) return;
+  requestMicThen(() => {
+    if (voiceState !== 'speaking') return; // state may have changed while permission popup was up
+    voiceRecognition.lang = langSelect.value === 'Hindi' ? 'hi-IN' : langSelect.value === 'Spanish' ? 'es-ES' : langSelect.value === 'French' ? 'fr-FR' : 'en-US';
+    try { voiceRecognition.start(); hotMicRunning = true; } catch (e) { hotMicRunning = false; }
+  });
+}
+
 function startVoiceListening() {
   if (!voiceRecognition) return;
+  if (!voiceMicEnabled) { setVoiceState(voiceState); return; } // shows "Mic is off" via setVoiceState guard
   requestMicThen(() => {
     voiceTranscript.textContent = '';
     voiceSubtitles.style.display = 'none';
-    voiceSubtitles.textContent = '';
+    voiceSubtitles.innerHTML = '';
     voiceRecognition.lang = langSelect.value === 'Hindi' ? 'hi-IN' : langSelect.value === 'Spanish' ? 'es-ES' : langSelect.value === 'French' ? 'fr-FR' : 'en-US';
     try {
       voiceRecognition.start();
@@ -1237,7 +1332,27 @@ function startVoiceListening() {
   });
 }
 
+// Builds the subtitle text as individual <span> words, all dim, so they can light up as Vitals speaks them
+function buildSubtitleSpans(text) {
+  voiceSubtitles.innerHTML = '';
+  const wordRegex = /\S+/g;
+  let m; let lastIndex = 0;
+  const spans = [];
+  while ((m = wordRegex.exec(text))) {
+    if (m.index > lastIndex) voiceSubtitles.appendChild(document.createTextNode(text.slice(lastIndex, m.index)));
+    const span = document.createElement('span');
+    span.className = 'sub-word';
+    span.textContent = m[0];
+    voiceSubtitles.appendChild(span);
+    spans.push({ start: m.index, el: span });
+    lastIndex = m.index + m[0].length;
+  }
+  if (lastIndex < text.length) voiceSubtitles.appendChild(document.createTextNode(text.slice(lastIndex)));
+  return spans;
+}
+
 async function handleVoiceUtterance(text) {
+  hotMicRunning = false;
   setVoiceState('thinking');
   voiceSubtitles.style.display = 'none';
   const reply = await sendMessage(text);
@@ -1249,20 +1364,21 @@ async function handleVoiceUtterance(text) {
     const utter = new SpeechSynthesisUtterance(reply);
     const lang = langSelect.value;
     utter.lang = lang === 'Hindi' ? 'hi-IN' : lang === 'Spanish' ? 'es-ES' : lang === 'French' ? 'fr-FR' : 'en-US';
+    let subtitleWords = [];
     utter.onstart = () => {
       voiceSubtitles.style.display = 'block';
-      voiceSubtitles.textContent = '';
+      subtitleWords = buildSubtitleSpans(reply);
+      startHotMic(); // hot mic goes live the moment Vitals starts talking, so the user can interrupt anytime
     };
     utter.onboundary = (event) => {
-      if (typeof event.charIndex === 'number') {
-        const upTo = event.charIndex + (event.charLength || 0);
-        voiceSubtitles.textContent = reply.slice(0, upTo || reply.length);
-      }
+      if (typeof event.charIndex !== 'number') return;
+      subtitleWords.forEach(w => { if (w.start <= event.charIndex) w.el.classList.add('spoken'); });
     };
     utter.onend = () => {
-      voiceSubtitles.textContent = reply;
+      subtitleWords.forEach(w => w.el.classList.add('spoken'));
       if (!voiceModeActive) return;
-      if (voiceContinuous.checked) startVoiceListening();
+      if (voiceState !== 'speaking') return; // it was interrupted; barge-in flow already switched state
+      if (voiceContinuous.checked && voiceMicEnabled) startVoiceListening();
       else setVoiceState('idle');
     };
     window.speechSynthesis.speak(utter);
@@ -1277,18 +1393,22 @@ voiceModeBtn.addEventListener('click', () => {
   voiceModeActive = true;
   voiceModeOverlay.style.display = 'flex';
   voiceSubtitles.style.display = 'none';
-  voiceSubtitles.textContent = '';
+  voiceSubtitles.innerHTML = '';
+  updateMicToggleUI();
   setVoiceState('idle');
 });
 voiceModeClose.addEventListener('click', () => {
   voiceModeActive = false;
+  hotMicRunning = false;
   if (voiceRecognition) try { voiceRecognition.stop(); } catch (e) {}
   if (window.speechSynthesis) window.speechSynthesis.cancel();
   voiceModeOverlay.style.display = 'none';
 });
 voiceCircle.addEventListener('click', () => {
+  if (!voiceMicEnabled) return;
   if (voiceState === 'idle') startVoiceListening();
   else if (voiceState === 'listening') { try { voiceRecognition.stop(); } catch (e) {} setVoiceState('idle'); }
+  else if (voiceState === 'speaking') { if (window.speechSynthesis) window.speechSynthesis.cancel(); setVoiceState('idle'); }
 });
 
 micBtn.addEventListener('click', () => {

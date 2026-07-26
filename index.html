@@ -901,7 +901,7 @@ function syncPinnedToConversation() {
 function ensureConversationTracked() {
   if (!currentId) {
     currentId = 'c' + Date.now();
-    conversations.unshift({ id: currentId, title: 'New chat', history, pins: pinnedMessages });
+    conversations.unshift({ id: currentId, title: 'New chat', history, pins: [...pinnedMessages] });
   }
 }
 
@@ -909,7 +909,7 @@ function updateCurrentTitle() {
   const conv = conversations.find(c => c.id === currentId);
   if (conv) {
     conv.title = deriveTitle(history);
-    conv.pins = pinnedMessages;
+    conv.pins = [...pinnedMessages];
   }
   renderSidebarList();
 }
@@ -937,12 +937,13 @@ function loadConversation(id) {
   suggestions.style.display = 'none';
   renderPinned();
   history.forEach(m => {
+    if (!m.id) m.id = `msg-${++messageCounter}`;
     if (Array.isArray(m.content)) {
       const text = m.content.find(c => c.type === 'text')?.text || '';
       const img = m.content.find(c => c.type === 'image_url')?.image_url?.url || null;
-      addMessage(m.role, text, img);
+      addMessage(m.role, text, img, m.id);
     } else {
-      addMessage(m.role, m.content);
+      addMessage(m.role, m.content, null, m.id);
     }
   });
   renderSidebarList();
@@ -984,11 +985,11 @@ function scrollThreadToBottom() {
 const threadMutationObserver = new MutationObserver(() => scrollThreadToBottom());
 threadMutationObserver.observe(thread, { childList: true, subtree: true, characterData: true });
 
-function addMessage(role, text, imageDataUrl) {
+function addMessage(role, text, imageDataUrl, messageId = null) {
   const wrap = document.createElement('div');
-  const messageId = `msg-${++messageCounter}`;
-  wrap.id = messageId;
-  wrap.dataset.messageId = messageId;
+  const stableMessageId = messageId || `msg-${++messageCounter}`;
+  wrap.id = stableMessageId;
+  wrap.dataset.messageId = stableMessageId;
   wrap.className = 'msg ' + role;
   const msgRow = document.createElement('div');
   msgRow.className = 'msg-row';
@@ -1040,12 +1041,12 @@ function addMessage(role, text, imageDataUrl) {
     pinBtn.className = 'tool-btn'; pinBtn.title = 'Pin this answer';
     pinBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l1.5 5.5L19 9l-4 4 1 6-4-3-4 3 1-6-4-4 5.5-1.5z"/></svg>';
     pinBtn.addEventListener('click', () => {
-      const already = pinnedMessages.some(p => p.id === messageId);
+      const already = pinnedMessages.some(p => p.id === stableMessageId);
       if (already) {
         pinnedMessages = pinnedMessages.filter(p => p.id !== messageId);
         pinBtn.classList.remove('pinned');
       } else {
-        pinnedMessages.push({ id: messageId, text });
+        pinnedMessages.push({ id: stableMessageId, text });
         pinBtn.classList.add('pinned');
       }
       syncPinnedToConversation();
@@ -1110,7 +1111,8 @@ async function sendMessage(text) {
   suggestions.style.display = 'none';
 
   const displayText = text.trim() || (hasImage ? 'Please look closely at this photo and describe the visible skin changes or marks in plain language.' : '');
-  addMessage('user', displayText, hasImage ? attachedImage.dataUrl : null);
+  const userMessageId = `msg-${++messageCounter}`;
+  addMessage('user', displayText, hasImage ? attachedImage.dataUrl : null, userMessageId);
 
   const userContent = hasImage
     ? [
@@ -1118,7 +1120,7 @@ async function sendMessage(text) {
         { type: 'image_url', image_url: { url: attachedImage.dataUrl } }
       ]
     : text;
-  history.push({ role: 'user', content: userContent });
+  history.push({ id: userMessageId, role: 'user', content: userContent });
   ensureConversationTracked();
   updateCurrentTitle();
   questionCount++;
@@ -1148,8 +1150,9 @@ async function sendMessage(text) {
     const data = await response.json();
     removeTyping();
     const reply = data?.choices?.[0]?.message?.content || "Sorry, I couldn't process that. Try again?";
-    addMessage('assistant', reply);
-    history.push({ role: 'assistant', content: reply });
+    const assistantMessageId = `msg-${++messageCounter}`;
+    addMessage('assistant', reply, null, assistantMessageId);
+    history.push({ id: assistantMessageId, role: 'assistant', content: reply });
     return reply;
   } catch (err) {
     removeTyping();

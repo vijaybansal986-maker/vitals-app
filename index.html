@@ -895,7 +895,7 @@ function renderSidebarList() {
 function syncPinnedToConversation() {
   if (!currentId) return;
   const conv = conversations.find(c => c.id === currentId);
-  if (conv) conv.pins = pinnedMessages;
+  if (conv) conv.pins = [...pinnedMessages];
 }
 
 function ensureConversationTracked() {
@@ -927,11 +927,12 @@ function startNewChat(greet = true) {
 }
 
 function loadConversation(id) {
+  syncPinnedToConversation();
   const conv = conversations.find(c => c.id === id);
   if (!conv) return;
   history = conv.history;
   currentId = conv.id;
-  pinnedMessages = conv.pins || [];
+  pinnedMessages = conv.pins ? [...conv.pins] : [];
   thread.innerHTML = '';
   suggestions.style.display = 'none';
   renderPinned();

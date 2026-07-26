@@ -856,7 +856,7 @@ printBtn.addEventListener('click', () => window.print());
 /* ---------- Sidebar ---------- */
 sidebarToggle.addEventListener('click', () => sidebar.classList.toggle('closed'));
 
-let conversations = []; // {id, title, history}
+let conversations = []; // {id, title, history, pins}
 let currentId = null;
 
 function deriveTitle(h) {
@@ -892,20 +892,30 @@ function renderSidebarList() {
   });
 }
 
+function syncPinnedToConversation() {
+  if (!currentId) return;
+  const conv = conversations.find(c => c.id === currentId);
+  if (conv) conv.pins = pinnedMessages;
+}
+
 function ensureConversationTracked() {
   if (!currentId) {
     currentId = 'c' + Date.now();
-    conversations.unshift({ id: currentId, title: 'New chat', history });
+    conversations.unshift({ id: currentId, title: 'New chat', history, pins: pinnedMessages });
   }
 }
 
 function updateCurrentTitle() {
   const conv = conversations.find(c => c.id === currentId);
-  if (conv) conv.title = deriveTitle(history);
+  if (conv) {
+    conv.title = deriveTitle(history);
+    conv.pins = pinnedMessages;
+  }
   renderSidebarList();
 }
 
 function startNewChat(greet = true) {
+  syncPinnedToConversation();
   history = [];
   currentId = null;
   pinnedMessages = [];
@@ -921,7 +931,7 @@ function loadConversation(id) {
   if (!conv) return;
   history = conv.history;
   currentId = conv.id;
-  pinnedMessages = [];
+  pinnedMessages = conv.pins || [];
   thread.innerHTML = '';
   suggestions.style.display = 'none';
   renderPinned();
@@ -1037,6 +1047,7 @@ function addMessage(role, text, imageDataUrl) {
         pinnedMessages.push({ id: messageId, text });
         pinBtn.classList.add('pinned');
       }
+      syncPinnedToConversation();
       renderPinned();
     });
     tools.appendChild(speakBtn); tools.appendChild(upBtn); tools.appendChild(downBtn); tools.appendChild(pinBtn);
@@ -1768,6 +1779,7 @@ function renderPinned() {
     remove.addEventListener('click', (e) => {
       e.stopPropagation();
       pinnedMessages.splice(i, 1);
+      syncPinnedToConversation();
       renderPinned();
     });
 

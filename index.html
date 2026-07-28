@@ -638,7 +638,7 @@ Rules:
 let history = [];
 let topicsUsed = new Set();
 let questionCount = 0;
-let pinnedMessages = []; // [{ id, text }]
+let pinnedMessages = []; // GLOBAL across every chat: [{ id, convId, text }]
 let messageCounter = 0;
 let allergyProfile = '';
 let userName = '';
@@ -895,33 +895,22 @@ function renderSidebarList() {
   });
 }
 
-function syncPinnedToConversation() {
-  if (!currentId) return;
-  const conv = conversations.find(c => c.id === currentId);
-  if (conv) conv.pins = pinnedMessages;
-}
-
 function ensureConversationTracked() {
   if (!currentId) {
     currentId = 'c' + Date.now();
-    conversations.unshift({ id: currentId, title: 'New chat', history, pins: pinnedMessages });
+    conversations.unshift({ id: currentId, title: 'New chat', history });
   }
 }
 
 function updateCurrentTitle() {
   const conv = conversations.find(c => c.id === currentId);
-  if (conv) {
-    conv.title = deriveTitle(history);
-    conv.pins = pinnedMessages;
-  }
+  if (conv) conv.title = deriveTitle(history);
   renderSidebarList();
 }
 
 function startNewChat(greet = true) {
-  syncPinnedToConversation();
   history = [];
   currentId = null;
-  pinnedMessages = [];
   thread.innerHTML = '';
   suggestions.style.display = 'flex';
   renderPinned();
@@ -934,7 +923,6 @@ function loadConversation(id) {
   if (!conv) return;
   history = conv.history;
   currentId = conv.id;
-  pinnedMessages = conv.pins || [];
   thread.innerHTML = '';
   suggestions.style.display = 'none';
   renderPinned();
@@ -1048,10 +1036,9 @@ function addMessage(role, text, imageDataUrl, existingId) {
         pinnedMessages = pinnedMessages.filter(p => p.id !== messageId);
         pinBtn.classList.remove('pinned');
       } else {
-        pinnedMessages.push({ id: messageId, text });
+        pinnedMessages.push({ id: messageId, convId: currentId, text });
         pinBtn.classList.add('pinned');
       }
-      syncPinnedToConversation();
       renderPinned();
     });
     tools.appendChild(speakBtn); tools.appendChild(upBtn); tools.appendChild(downBtn); tools.appendChild(pinBtn);
@@ -1800,7 +1787,16 @@ function renderPinned() {
   pinnedMessages.forEach((pin, i) => {
     const item = document.createElement('div');
     item.className = 'list-item';
+    item.style.flexDirection = 'column';
+    item.style.alignItems = 'stretch';
+    item.style.gap = '4px';
     item.dataset.messageId = pin.id;
+
+    const topRow = document.createElement('div');
+    topRow.style.display = 'flex';
+    topRow.style.justifyContent = 'space-between';
+    topRow.style.alignItems = 'center';
+    topRow.style.gap = '8px';
 
     const jump = document.createElement('button');
     jump.type = 'button';
@@ -1808,9 +1804,14 @@ function renderPinned() {
     jump.textContent = `${pin.text.slice(0, 140)}${pin.text.length > 140 ? '…' : ''}`;
     jump.title = 'Jump to this answer';
     jump.addEventListener('click', () => {
-      focusMessage(pin.id);
       document.getElementById('pinnedPanel').classList.remove('open');
       document.body.classList.remove('panel-open');
+      if (pin.convId && pin.convId !== currentId) {
+        loadConversation(pin.convId);
+        setTimeout(() => focusMessage(pin.id), 120);
+      } else {
+        focusMessage(pin.id);
+      }
     });
 
     const remove = document.createElement('span');
@@ -1819,12 +1820,21 @@ function renderPinned() {
     remove.addEventListener('click', (e) => {
       e.stopPropagation();
       pinnedMessages.splice(i, 1);
-      syncPinnedToConversation();
       renderPinned();
     });
 
-    item.appendChild(jump);
-    item.appendChild(remove);
+    topRow.appendChild(jump);
+    topRow.appendChild(remove);
+    item.appendChild(topRow);
+
+    if (pin.convId && pin.convId !== currentId) {
+      const sourceConv = conversations.find(c => c.id === pin.convId);
+      const label = document.createElement('span');
+      label.style.cssText = 'font-size:11px; color:var(--ink-soft);';
+      label.textContent = 'From: ' + (sourceConv ? sourceConv.title : 'another chat');
+      item.appendChild(label);
+    }
+
     list.appendChild(item);
   });
 }

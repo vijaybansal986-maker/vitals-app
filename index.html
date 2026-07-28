@@ -1,4 +1,6 @@
 
+
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -43,7 +45,7 @@
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; height: 100%; font-family: "Iowan Old Style", "Palatino Linotype", Georgia, serif; background: var(--paper); color: var(--ink); }
-  #shell { display: flex; height: 100vh; max-width: 900px; margin: 0 auto; position: relative; }
+  #shell { display: flex; height: 100vh; width: 100vw; max-width: none; margin: 0 auto; position: relative; overflow: hidden; }
 
   /* Sidebar */
   #sidebar {
@@ -76,7 +78,8 @@
   .conv-item .conv-del:hover { opacity: 1; }
   .conv-empty { font-size: 12px; color: var(--ink-soft); padding: 10px; }
 
-  #app { flex: 1; display: flex; flex-direction: column; min-width: 0; height: 100vh; }
+  #app { flex: 1; display: flex; flex-direction: column; min-width: 0; height: 100vh; box-sizing: border-box; transition: padding-right 0.2s ease; }
+  body.panel-open #app { padding-right: 420px; }
   header { padding: 14px 20px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .mark { width: 34px; height: 34px; border-radius: 9px; background: var(--paper); display: flex; align-items: center; justify-content: center; flex-shrink: 0; overflow: hidden; }
   .mark img { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -118,6 +121,8 @@
   .qlink[data-open="aboutPanel"] { border-color: #0D9488; background: rgba(13,148,136,0.18); }
   .qlink:hover { background: var(--sage-100); }
   #thread { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 16px; }
+  @keyframes pinHighlight { 0%, 100% { box-shadow: none; } 20%, 80% { box-shadow: 0 0 0 3px var(--sage-500); } }
+  .msg.highlight .bubble { animation: pinHighlight 2.2s ease; border-radius: 14px; }
   .msg { display: flex; gap: 10px; max-width: 100%; flex-direction: column; }
   .msg-row { display: flex; gap: 10px; max-width: 100%; }
   .msg.user .msg-row { flex-direction: row-reverse; }
@@ -147,7 +152,9 @@
   .checker-opt { font-size: 12.5px; padding: 6px 11px; border-radius: 999px; border: 1px solid var(--sage-300); background: var(--paper); color: var(--sage-700); cursor: pointer; }
   .checker-opt:hover { background: var(--sage-100); }
   .side-panel { border-top: 1px solid var(--line); padding: 14px 20px; font-family: -apple-system, sans-serif; display: none; background: var(--sage-50); max-height: 45vh; overflow-y: auto; }
-  .side-panel.open { display: block; }
+  .side-panel.open { display: block; position: fixed; right: 16px; top: 84px; width: min(380px, calc(100vw - 280px)); max-height: calc(100vh - 110px); border: 1px solid var(--line); border-radius: 16px; box-shadow: 0 24px 60px rgba(0,0,0,0.12); z-index: 35; }
+  .side-panel .pin-jump { flex: 1; border: none; background: transparent; padding: 0; text-align: left; cursor: pointer; color: inherit; font: inherit; }
+
   .side-panel h3 { margin: 0 0 8px; font-size: 13.5px; }
   .side-panel .close-row { display: flex; justify-content: flex-end; margin-bottom: 4px; }
   .row { display: flex; gap: 8px; margin-bottom: 8px; }
@@ -191,6 +198,11 @@
   .auth-field input { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font-size: 14px; background: var(--paper); color: var(--ink); }
   .auth-submit { width: 100%; padding: 11px; margin-top: 6px; background: linear-gradient(135deg, #2563EB, #3B82F6); }
   .auth-note { font-size: 10.5px; color: var(--ink-soft); text-align: center; margin-top: 14px; line-height: 1.5; }
+
+  @media (max-width: 980px) {
+    body.panel-open #app { padding-right: 0; }
+    .side-panel.open { position: relative; right: auto; top: auto; width: auto; max-height: 45vh; margin: 0 20px 14px; border-radius: 14px; box-shadow: none; z-index: auto; }
+  }
 
   @media (max-width: 700px) {
     #sidebar { position: fixed; z-index: 40; height: 100vh; }
@@ -626,7 +638,8 @@ Rules:
 let history = [];
 let topicsUsed = new Set();
 let questionCount = 0;
-let pinnedMessages = [];
+let pinnedMessages = []; // [{ id, text }]
+let messageCounter = 0;
 let allergyProfile = '';
 let userName = '';
 
@@ -846,7 +859,7 @@ printBtn.addEventListener('click', () => window.print());
 /* ---------- Sidebar ---------- */
 sidebarToggle.addEventListener('click', () => sidebar.classList.toggle('closed'));
 
-let conversations = []; // {id, title, history}
+let conversations = []; // {id, title, history, pins}
 let currentId = null;
 
 function deriveTitle(h) {
@@ -882,24 +895,36 @@ function renderSidebarList() {
   });
 }
 
+function syncPinnedToConversation() {
+  if (!currentId) return;
+  const conv = conversations.find(c => c.id === currentId);
+  if (conv) conv.pins = pinnedMessages;
+}
+
 function ensureConversationTracked() {
   if (!currentId) {
     currentId = 'c' + Date.now();
-    conversations.unshift({ id: currentId, title: 'New chat', history });
+    conversations.unshift({ id: currentId, title: 'New chat', history, pins: pinnedMessages });
   }
 }
 
 function updateCurrentTitle() {
   const conv = conversations.find(c => c.id === currentId);
-  if (conv) conv.title = deriveTitle(history);
+  if (conv) {
+    conv.title = deriveTitle(history);
+    conv.pins = pinnedMessages;
+  }
   renderSidebarList();
 }
 
 function startNewChat(greet = true) {
+  syncPinnedToConversation();
   history = [];
   currentId = null;
+  pinnedMessages = [];
   thread.innerHTML = '';
   suggestions.style.display = 'flex';
+  renderPinned();
   if (greet) addMessage('assistant', `Hi ${userName || 'there'}, new chat started. What would you like to ask?`);
   renderSidebarList();
 }
@@ -909,15 +934,17 @@ function loadConversation(id) {
   if (!conv) return;
   history = conv.history;
   currentId = conv.id;
+  pinnedMessages = conv.pins || [];
   thread.innerHTML = '';
   suggestions.style.display = 'none';
+  renderPinned();
   history.forEach(m => {
     if (Array.isArray(m.content)) {
       const text = m.content.find(c => c.type === 'text')?.text || '';
       const img = m.content.find(c => c.type === 'image_url')?.image_url?.url || null;
-      addMessage(m.role, text, img);
+      addMessage(m.role, text, img, m.id);
     } else {
-      addMessage(m.role, m.content);
+      addMessage(m.role, m.content, null, m.id);
     }
   });
   renderSidebarList();
@@ -959,8 +986,11 @@ function scrollThreadToBottom() {
 const threadMutationObserver = new MutationObserver(() => scrollThreadToBottom());
 threadMutationObserver.observe(thread, { childList: true, subtree: true, characterData: true });
 
-function addMessage(role, text, imageDataUrl) {
+function addMessage(role, text, imageDataUrl, existingId) {
   const wrap = document.createElement('div');
+  const messageId = existingId || `msg-${++messageCounter}`;
+  wrap.id = messageId;
+  wrap.dataset.messageId = messageId;
   wrap.className = 'msg ' + role;
   const msgRow = document.createElement('div');
   msgRow.className = 'msg-row';
@@ -1011,10 +1041,18 @@ function addMessage(role, text, imageDataUrl) {
     const pinBtn = document.createElement('button');
     pinBtn.className = 'tool-btn'; pinBtn.title = 'Pin this answer';
     pinBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l1.5 5.5L19 9l-4 4 1 6-4-3-4 3 1-6-4-4 5.5-1.5z"/></svg>';
+    if (pinnedMessages.some(p => p.id === messageId)) pinBtn.classList.add('pinned');
     pinBtn.addEventListener('click', () => {
-      const already = pinnedMessages.includes(text);
-      if (already) { pinnedMessages = pinnedMessages.filter(t => t !== text); pinBtn.classList.remove('pinned'); }
-      else { pinnedMessages.push(text); pinBtn.classList.add('pinned'); }
+      const already = pinnedMessages.some(p => p.id === messageId);
+      if (already) {
+        pinnedMessages = pinnedMessages.filter(p => p.id !== messageId);
+        pinBtn.classList.remove('pinned');
+      } else {
+        pinnedMessages.push({ id: messageId, text });
+        pinBtn.classList.add('pinned');
+      }
+      syncPinnedToConversation();
+      renderPinned();
     });
     tools.appendChild(speakBtn); tools.appendChild(upBtn); tools.appendChild(downBtn); tools.appendChild(pinBtn);
     wrap.appendChild(tools);
@@ -1022,6 +1060,18 @@ function addMessage(role, text, imageDataUrl) {
   thread.appendChild(wrap);
   thread.scrollTop = thread.scrollHeight;
   return bubble;
+}
+
+function focusMessage(messageId) {
+  const el = document.getElementById(messageId);
+  if (!el) return;
+
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  el.classList.add('highlight');
+  clearTimeout(el._highlightTimer);
+  el._highlightTimer = setTimeout(() => {
+    el.classList.remove('highlight');
+  }, 2200);
 }
 
 function addTyping() {
@@ -1045,9 +1095,33 @@ imageInput.addEventListener('change', () => {
   if (!file) return;
   const reader = new FileReader();
   reader.onload = () => {
-    attachedImage = { dataUrl: reader.result };
-    imagePreviewThumb.src = reader.result;
-    imagePreviewRow.style.display = 'block';
+    const rawDataUrl = reader.result;
+    const img = new Image();
+    img.onload = () => {
+      // Phone photos can be several MB — downscale/re-encode so the proxy/model reliably receives the full image
+      const maxDim = 1280;
+      let { width, height } = img;
+      if (width > maxDim || height > maxDim) {
+        const scale = maxDim / Math.max(width, height);
+        width = Math.round(width * scale);
+        height = Math.round(height * scale);
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = width; canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, width, height);
+      const compressed = canvas.toDataURL('image/jpeg', 0.85);
+      attachedImage = { dataUrl: compressed };
+      imagePreviewThumb.src = compressed;
+      imagePreviewRow.style.display = 'block';
+    };
+    img.onerror = () => {
+      // Fall back to the raw file if it's an unusual format canvas can't decode
+      attachedImage = { dataUrl: rawDataUrl };
+      imagePreviewThumb.src = rawDataUrl;
+      imagePreviewRow.style.display = 'block';
+    };
+    img.src = rawDataUrl;
   };
   reader.readAsDataURL(file);
 });
@@ -1062,8 +1136,9 @@ async function sendMessage(text) {
   if (!text.trim() && !hasImage) return;
   suggestions.style.display = 'none';
 
-  const displayText = text.trim() || (hasImage ? 'What can you tell me about this?' : '');
-  addMessage('user', displayText, hasImage ? attachedImage.dataUrl : null);
+  const displayText = text.trim() || (hasImage ? 'Please look closely at this photo and describe the visible skin changes or marks in plain language.' : '');
+  const userMsgId = `msg-${++messageCounter}`;
+  addMessage('user', displayText, hasImage ? attachedImage.dataUrl : null, userMsgId);
 
   const userContent = hasImage
     ? [
@@ -1071,7 +1146,7 @@ async function sendMessage(text) {
         { type: 'image_url', image_url: { url: attachedImage.dataUrl } }
       ]
     : text;
-  history.push({ role: 'user', content: userContent });
+  history.push({ role: 'user', content: userContent, id: userMsgId });
   ensureConversationTracked();
   updateCurrentTitle();
   questionCount++;
@@ -1096,13 +1171,14 @@ async function sendMessage(text) {
     const response = await fetch(PROXY_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model, messages: [{ role: "system", content: systemPrompt }, ...history] })
+      body: JSON.stringify({ model, messages: [{ role: "system", content: systemPrompt }, ...history.map(({ role, content }) => ({ role, content }))] })
     });
     const data = await response.json();
     removeTyping();
     const reply = data?.choices?.[0]?.message?.content || "Sorry, I couldn't process that. Try again?";
-    addMessage('assistant', reply);
-    history.push({ role: 'assistant', content: reply });
+    const replyId = `msg-${++messageCounter}`;
+    addMessage('assistant', reply, null, replyId);
+    history.push({ role: 'assistant', content: reply, id: replyId });
     return reply;
   } catch (err) {
     removeTyping();
@@ -1121,8 +1197,18 @@ suggestions.addEventListener('click', (e) => { const chip = e.target.closest('.c
 
 /* ---------- Panels ---------- */
 const panelIds = ['bmiPanel', 'firstAidPanel', 'medPanel', 'journalPanel', 'vaccPanel', 'waterPanel', 'allergyPanel', 'doctorPanel', 'searchPanel', 'pinnedPanel', 'analyticsPanel', 'feedbackPanel', 'aboutPanel'];
-function openPanel(id) { panelIds.forEach(p => document.getElementById(p).classList.toggle('open', p === id)); }
-document.querySelectorAll('[data-close]').forEach(btn => btn.addEventListener('click', () => document.getElementById(btn.dataset.close).classList.remove('open')));
+function openPanel(id) {
+  panelIds.forEach(p => document.getElementById(p).classList.toggle('open', p === id));
+  document.body.classList.toggle('panel-open', !!id);
+}
+function closeAllPanels() {
+  panelIds.forEach(p => document.getElementById(p).classList.remove('open'));
+  document.body.classList.remove('panel-open');
+}
+document.querySelectorAll('[data-close]').forEach(btn => btn.addEventListener('click', () => {
+  document.getElementById(btn.dataset.close).classList.remove('open');
+  document.body.classList.remove('panel-open');
+}));
 
 toolsBtn.addEventListener('click', () => { toolsModal.style.display = 'flex'; });
 closeToolsModal.addEventListener('click', () => { toolsModal.style.display = 'none'; });
@@ -1706,14 +1792,41 @@ document.getElementById('searchInput').addEventListener('input', (e) => {
 /* ---------- Pinned answers ---------- */
 function renderPinned() {
   const list = document.getElementById('pinnedList');
-  if (pinnedMessages.length === 0) { list.innerHTML = '<div class="conv-empty">Nothing pinned yet — tap the pin icon under any Vitals reply.</div>'; return; }
+  if (pinnedMessages.length === 0) {
+    list.innerHTML = '<div class="conv-empty">Nothing pinned yet — tap the pin icon under any Vitals reply.</div>';
+    return;
+  }
   list.innerHTML = '';
-  pinnedMessages.forEach((text, i) => {
-    const item = document.createElement('div'); item.className = 'list-item';
-    item.innerHTML = `<span style="white-space:normal;">${text.slice(0, 140)}${text.length > 140 ? '…' : ''}</span><span class="del" data-i="${i}">Remove</span>`;
+  pinnedMessages.forEach((pin, i) => {
+    const item = document.createElement('div');
+    item.className = 'list-item';
+    item.dataset.messageId = pin.id;
+
+    const jump = document.createElement('button');
+    jump.type = 'button';
+    jump.className = 'pin-jump';
+    jump.textContent = `${pin.text.slice(0, 140)}${pin.text.length > 140 ? '…' : ''}`;
+    jump.title = 'Jump to this answer';
+    jump.addEventListener('click', () => {
+      focusMessage(pin.id);
+      document.getElementById('pinnedPanel').classList.remove('open');
+      document.body.classList.remove('panel-open');
+    });
+
+    const remove = document.createElement('span');
+    remove.className = 'del';
+    remove.textContent = 'Remove';
+    remove.addEventListener('click', (e) => {
+      e.stopPropagation();
+      pinnedMessages.splice(i, 1);
+      syncPinnedToConversation();
+      renderPinned();
+    });
+
+    item.appendChild(jump);
+    item.appendChild(remove);
     list.appendChild(item);
   });
-  list.querySelectorAll('.del').forEach(el => el.addEventListener('click', () => { pinnedMessages.splice(parseInt(el.dataset.i), 1); renderPinned(); }));
 }
 
 /* ---------- Analytics (real session data, not persisted) ---------- */
@@ -1745,7 +1858,7 @@ document.addEventListener('keydown', (e) => {
   }
   if (e.key === 'Escape') {
     toolsModal.style.display = 'none';
-    panelIds.forEach(p => document.getElementById(p).classList.remove('open'));
+    closeAllPanels();
   }
 });
 

@@ -1,6 +1,8 @@
 
 
 
+
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -643,6 +645,44 @@ let messageCounter = 0;
 let allergyProfile = '';
 let userName = '';
 
+function buildSystemPrompt() {
+  const language = langSelect.value;
+  // Keeping this instruction separate and explicit makes it much harder for the
+  // model to follow the language of an earlier chat message instead.
+  let prompt = `${BASE_SYSTEM_PROMPT}
+
+OUTPUT LANGUAGE — MANDATORY:
+- Write the entire reply in ${language}. This includes headings, bullets, safety information, and any follow-up questions.
+- Do not switch to the user's language or any previous chat language unless it is ${language}.
+- If the user asks for another language, still reply in ${language}.`;
+  if (allergyProfile) prompt += `\n- The person has noted the following about themselves: ${allergyProfile}. Take this into account where relevant.`;
+  const healthContext = buildHealthContext();
+  if (healthContext) prompt += `\n- Here is the person's current tracked data in the app, so you can answer questions about it directly (e.g. "how many steps have I taken", "what medication do I need to take"):\n${healthContext}`;
+  return prompt;
+}
+
+async function copyAnswer(text, button) {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+    } else {
+      const fallback = document.createElement('textarea');
+      fallback.value = text;
+      fallback.style.cssText = 'position:fixed; opacity:0; pointer-events:none;';
+      document.body.appendChild(fallback);
+      fallback.select();
+      document.execCommand('copy');
+      fallback.remove();
+    }
+    const original = button.innerHTML;
+    button.title = 'Copied';
+    button.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>';
+    setTimeout(() => { button.title = 'Copy answer'; button.innerHTML = original; }, 1400);
+  } catch {
+    button.title = 'Could not copy';
+  }
+}
+
 /* ---------- Auth overlay (real Firebase Authentication) ---------- */
 const authOverlay = document.getElementById('authOverlay');
 const loginTab = document.getElementById('loginTab');
@@ -1006,6 +1046,16 @@ function addMessage(role, text, imageDataUrl, existingId) {
   if (role === 'assistant') {
     const tools = document.createElement('div');
     tools.className = 'msg-tools';
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'tool-btn'; copyBtn.title = 'Copy answer';
+    copyBtn.setAttribute('aria-label', 'Copy answer');
+    copyBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M15 9V5a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2h4"/></svg>';
+    copyBtn.addEventListener('click', () => copyAnswer(text, copyBtn));
+    const regenerateBtn = document.createElement('button');
+    regenerateBtn.className = 'tool-btn'; regenerateBtn.title = 'Regenerate answer';
+    regenerateBtn.setAttribute('aria-label', 'Regenerate answer');
+    regenerateBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 10.5 4"/><path d="M20 4v7h-7"/></svg>';
+    regenerateBtn.addEventListener('click', () => regenerateAnswer(messageId));
     const speakBtn = document.createElement('button');
     speakBtn.className = 'tool-btn'; speakBtn.title = 'Read aloud';
     speakBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 010 7"/></svg>';
@@ -1041,7 +1091,7 @@ function addMessage(role, text, imageDataUrl, existingId) {
       }
       renderPinned();
     });
-    tools.appendChild(speakBtn); tools.appendChild(upBtn); tools.appendChild(downBtn); tools.appendChild(pinBtn);
+    tools.appendChild(copyBtn); tools.appendChild(regenerateBtn); tools.appendChild(speakBtn); tools.appendChild(upBtn); tools.appendChild(downBtn); tools.appendChild(pinBtn);
     wrap.appendChild(tools);
   }
   thread.appendChild(wrap);
@@ -1143,12 +1193,7 @@ async function sendMessage(text) {
   sendBtn.disabled = true;
   addTyping();
 
-  const lang = langSelect.value;
-  let systemPrompt = lang === 'English' ? BASE_SYSTEM_PROMPT
-    : BASE_SYSTEM_PROMPT + `\n- Reply in ${lang}, regardless of what language the user writes in.`;
-  if (allergyProfile) systemPrompt += `\n- The person has noted the following about themselves: ${allergyProfile}. Take this into account where relevant.`;
-  const healthContext = buildHealthContext();
-  if (healthContext) systemPrompt += `\n- Here is the person's current tracked data in the app, so you can answer questions about it directly (e.g. "how many steps have I taken", "what medication do I need to take"):\n${healthContext}`;
+  const systemPrompt = buildSystemPrompt();
 
   const model = hasImage || history.some(m => Array.isArray(m.content))
     ? "meta-llama/llama-4-scout-17b-16e-instruct"
@@ -1158,7 +1203,7 @@ async function sendMessage(text) {
     const response = await fetch(PROXY_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model, messages: [{ role: "system", content: systemPrompt }, ...history.map(({ role, content }) => ({ role, content }))] })
+      body: JSON.stringify({ model, temperature: 0.2, messages: [{ role: "system", content: systemPrompt }, ...history.map(({ role, content }) => ({ role, content }))] })
     });
     const data = await response.json();
     removeTyping();
@@ -1174,6 +1219,45 @@ async function sendMessage(text) {
     return null;
   } finally {
     sendBtn.disabled = false; input.focus();
+  }
+}
+
+async function regenerateAnswer(answerId) {
+  const answerIndex = history.findIndex(message => message.id === answerId && message.role === 'assistant');
+  if (answerIndex < 0 || sendBtn.disabled) return;
+
+  const answerEl = document.getElementById(answerId);
+  const oldAnswer = history[answerIndex];
+  const requestHistory = history.slice(0, answerIndex);
+  const model = requestHistory.some(message => Array.isArray(message.content))
+    ? 'meta-llama/llama-4-scout-17b-16e-instruct'
+    : 'llama-3.3-70b-versatile';
+
+  sendBtn.disabled = true;
+  if (answerEl) answerEl.remove();
+  addTyping();
+  try {
+    const response = await fetch(PROXY_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model,
+        temperature: 0.2,
+        messages: [{ role: 'system', content: buildSystemPrompt() }, ...requestHistory.map(({ role, content }) => ({ role, content }))]
+      })
+    });
+    const data = await response.json();
+    const reply = data?.choices?.[0]?.message?.content || "Sorry, I couldn't process that. Try again?";
+    history.splice(answerIndex, 1, { role: 'assistant', content: reply, id: oldAnswer.id });
+    removeTyping();
+    addMessage('assistant', reply, null, oldAnswer.id);
+  } catch (err) {
+    removeTyping();
+    // Preserve the original answer if regeneration cannot reach the service.
+    addMessage('assistant', oldAnswer.content, null, oldAnswer.id);
+  } finally {
+    sendBtn.disabled = false;
+    input.focus();
   }
 }
 

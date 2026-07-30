@@ -661,6 +661,75 @@ OUTPUT LANGUAGE — MANDATORY:
   return prompt;
 }
 
+const UI_COPY = {
+  English: {
+    welcome: name => `Hi ${name}, I'm Vitals. Ask me about symptoms, conditions, medications, or general wellness, and I'll do my best to help.`,
+    newChat: name => `Hi ${name}, new chat started. What would you like to ask?`,
+    error: 'Something went wrong reaching the assistant. Please try again.'
+  },
+  Hindi: {
+    welcome: name => `नमस्ते ${name}, मैं Vitals हूँ। आप लक्षणों, स्वास्थ्य स्थितियों, दवाओं या सामान्य स्वास्थ्य के बारे में पूछ सकते हैं। मैं आपकी मदद करने की पूरी कोशिश करूँगा।`,
+    newChat: name => `नमस्ते ${name}, नई चैट शुरू हो गई है। आप क्या पूछना चाहेंगे?`,
+    error: 'सहायक से संपर्क करने में कुछ गड़बड़ी हुई। कृपया फिर से कोशिश करें।'
+  },
+  Spanish: {
+    welcome: name => `Hola ${name}, soy Vitals. Puedes preguntarme sobre síntomas, afecciones, medicamentos o bienestar general. Haré todo lo posible por ayudarte.`,
+    newChat: name => `Hola ${name}, se inició un chat nuevo. ¿Qué te gustaría preguntar?`,
+    error: 'Ocurrió un problema al conectar con el asistente. Inténtalo de nuevo.'
+  },
+  French: {
+    welcome: name => `Bonjour ${name}, je suis Vitals. Vous pouvez me poser des questions sur les symptômes, les problèmes de santé, les médicaments ou le bien-être général. Je ferai de mon mieux pour vous aider.`,
+    newChat: name => `Bonjour ${name}, une nouvelle conversation a commencé. Que souhaitez-vous demander ?`,
+    error: 'Un problème est survenu lors de la connexion à l’assistant. Veuillez réessayer.'
+  }
+};
+
+function uiText(key, name = '') {
+  const copy = UI_COPY[langSelect.value] || UI_COPY.English;
+  return typeof copy[key] === 'function' ? copy[key](name) : copy[key];
+}
+
+function apiMessages(sourceHistory) {
+  const language = langSelect.value;
+  return [
+    { role: 'system', content: buildSystemPrompt() },
+    ...sourceHistory.map(({ role, content }) => ({ role, content })),
+    {
+      role: 'user',
+      content: `[LANGUAGE LOCK — FOLLOW THIS AFTER ANSWERING THE PREVIOUS REQUEST]\nReturn the complete answer only in ${language}. Translate every heading, bullet, warning, and sentence into ${language}; do not use any other language. Do not explain this instruction.`
+    }
+  ];
+}
+
+async function getLockedReply(model, sourceHistory) {
+  const response = await fetch(PROXY_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model, temperature: 0.2, messages: apiMessages(sourceHistory) })
+  });
+  const data = await response.json();
+  const draft = data?.choices?.[0]?.message?.content;
+  if (!draft) throw new Error('No reply returned');
+
+  // A second, isolated pass prevents an English/earlier-chat answer from leaking
+  // through when the first model call gives priority to conversation context.
+  const language = langSelect.value;
+  const translationResponse = await fetch(PROXY_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model,
+      temperature: 0,
+      messages: [
+        { role: 'system', content: `You are a precise translator. Return only the provided text translated completely into ${language}. Preserve its meaning, medical cautions, structure, and Markdown. Do not add commentary. Every word must be in ${language}.` },
+        { role: 'user', content: draft }
+      ]
+    })
+  });
+  const translationData = await translationResponse.json();
+  return translationData?.choices?.[0]?.message?.content || draft;
+}
+
 async function copyAnswer(text, button) {
   try {
     if (navigator.clipboard?.writeText) {
@@ -853,7 +922,7 @@ function renderOnboardStep() {
 }
 function finishOnboarding() {
   onboardOverlay.style.display = 'none';
-  addMessage('assistant', `Hi ${userName}, I'm Vitals. Ask me about symptoms, conditions, medications, or general wellness, and I'll do my best to help.`);
+  addMessage('assistant', uiText('welcome', userName));
   showHealthTip();
 }
 onboardNext.addEventListener('click', () => {
@@ -954,7 +1023,7 @@ function startNewChat(greet = true) {
   thread.innerHTML = '';
   suggestions.style.display = 'flex';
   renderPinned();
-  if (greet) addMessage('assistant', `Hi ${userName || 'there'}, new chat started. What would you like to ask?`);
+  if (greet) addMessage('assistant', uiText('newChat', userName || 'there'));
   renderSidebarList();
 }
 
@@ -1193,28 +1262,20 @@ async function sendMessage(text) {
   sendBtn.disabled = true;
   addTyping();
 
-  const systemPrompt = buildSystemPrompt();
-
   const model = hasImage || history.some(m => Array.isArray(m.content))
     ? "meta-llama/llama-4-scout-17b-16e-instruct"
     : "llama-3.3-70b-versatile";
 
   try {
-    const response = await fetch(PROXY_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model, temperature: 0.2, messages: [{ role: "system", content: systemPrompt }, ...history.map(({ role, content }) => ({ role, content }))] })
-    });
-    const data = await response.json();
+    const reply = await getLockedReply(model, history);
     removeTyping();
-    const reply = data?.choices?.[0]?.message?.content || "Sorry, I couldn't process that. Try again?";
     const replyId = `msg-${++messageCounter}`;
     addMessage('assistant', reply, null, replyId);
     history.push({ role: 'assistant', content: reply, id: replyId });
     return reply;
   } catch (err) {
     removeTyping();
-    const errText = "Something went wrong reaching the assistant. Please try again.";
+    const errText = uiText('error');
     addMessage('assistant', errText);
     return null;
   } finally {
@@ -1237,24 +1298,15 @@ async function regenerateAnswer(answerId) {
   if (answerEl) answerEl.remove();
   addTyping();
   try {
-    const response = await fetch(PROXY_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model,
-        temperature: 0.2,
-        messages: [{ role: 'system', content: buildSystemPrompt() }, ...requestHistory.map(({ role, content }) => ({ role, content }))]
-      })
-    });
-    const data = await response.json();
-    const reply = data?.choices?.[0]?.message?.content || "Sorry, I couldn't process that. Try again?";
+    const reply = await getLockedReply(model, requestHistory);
     history.splice(answerIndex, 1, { role: 'assistant', content: reply, id: oldAnswer.id });
     removeTyping();
     addMessage('assistant', reply, null, oldAnswer.id);
   } catch (err) {
     removeTyping();
-    // Preserve the original answer if regeneration cannot reach the service.
-    addMessage('assistant', oldAnswer.content, null, oldAnswer.id);
+    const errText = uiText('error');
+    history.splice(answerIndex, 1, { role: 'assistant', content: errText, id: oldAnswer.id });
+    addMessage('assistant', errText, null, oldAnswer.id);
   } finally {
     sendBtn.disabled = false;
     input.focus();

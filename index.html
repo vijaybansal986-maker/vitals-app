@@ -710,24 +710,7 @@ async function getLockedReply(model, sourceHistory) {
   const data = await response.json();
   const draft = data?.choices?.[0]?.message?.content;
   if (!draft) throw new Error('No reply returned');
-
-  // A second, isolated pass prevents an English/earlier-chat answer from leaking
-  // through when the first model call gives priority to conversation context.
-  const language = langSelect.value;
-  const translationResponse = await fetch(PROXY_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model,
-      temperature: 0,
-      messages: [
-        { role: 'system', content: `You are a precise translator. Return only the provided text translated completely into ${language}. Preserve its meaning, medical cautions, structure, and Markdown. Do not add commentary. Every word must be in ${language}.` },
-        { role: 'user', content: draft }
-      ]
-    })
-  });
-  const translationData = await translationResponse.json();
-  return translationData?.choices?.[0]?.message?.content || draft;
+  return draft;
 }
 
 async function copyAnswer(text, button) {

@@ -1,5 +1,4 @@
 
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -372,10 +371,8 @@ async function callAPI(notes,onDelta){
     const eat=l=>{const m=l.match(/^data:\s*(.+)$/);if(m&&m[1]!=='[DONE]')try{raw+=JSON.parse(m[1]).choices[0].delta?.content||''}catch(e){}};
     const rd=r.body&&r.body.getReader?r.body.getReader():null;
     if(rd){const dec=new TextDecoder();for(;;){const{done,value}=await rd.read();if(done)break;const ch=dec.decode(value,{stream:true});txt+=ch;
-      if(!mode)mode=/^\s*data:/.test(txt)?'sse':'json';
-      if(mode==='sse'){buf+=ch;const ls=buf.split('\n');buf=ls.pop();ls.forEach(eat);onDelta&&onDelta(partial(raw))}}
-      if(mode==='sse'&&buf)eat(buf)}else txt=await r.text();
-    if(mode!=='sse'){raw=JSON.parse(txt)?.choices?.[0]?.message?.content||''}
+      if(/(^|\n)data:/.test(txt)){buf+=ch;const ls=buf.split('\n');buf=ls.pop();ls.forEach(eat);onDelta&&onDelta(partial(raw))}}}else txt=await r.text();
+    if(/(^|\n)data:/.test(txt)){raw='';txt.split('\n').forEach(eat)}else{raw=JSON.parse(txt)?.choices?.[0]?.message?.content||''}
     if(raw)return{...parse(raw),raw,notes};throw new Error('Empty reply')
   }catch(e){LAST=String(e&&e.message||e).slice(0,160)}}
   throw new Error('offline');
@@ -686,4 +683,3 @@ render();draw();wiz();if(S.lang!=='English')applyLang();
 </script>
 </body>
 </html>
-
